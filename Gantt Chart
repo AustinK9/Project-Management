@@ -1,0 +1,257 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from tkcalendar import DateEntry
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pandas as pd
+
+# Task storage - array of data types "tasks"
+tasks = []
+
+# Priority color mapping
+def priority_color(priority):
+    return {
+        "High": "red",
+        "Medium": "orange",
+        "Low": "green"
+    }.get(priority, "gray")
+
+# Add or update a task
+def add_task():
+    name = entry_name.get().strip()
+    start_dt = start_date.get_date()
+    end_dt = end_date.get_date()
+    priority = combo_priority.get()
+    status = combo_status.get()
+
+    if not name:
+        messagebox.showerror("Input Error", "Task name cannot be empty.")
+        return
+
+    if end_dt < start_dt:
+        messagebox.showerror("Date Error", "End date cannot be before start date.")
+        return
+
+    task = {
+        "name": name,
+        "start": start_dt,
+        "end": end_dt,
+        "priority": priority,
+        "status": status
+    }
+
+    selected = task_listbox.curselection()
+    if selected:
+        tasks[selected[0]] = task  # Edit
+    else:
+        tasks.append(task)  # New
+
+    update_task_list()
+    draw_gantt_chart()
+    clear_inputs()
+
+# Remove selected task
+def remove_task():
+    selected = task_listbox.curselection()
+    if not selected:
+        messagebox.showwarning("No Selection", "Please select a task to remove.")
+        return
+    tasks.pop(selected[0])
+    update_task_list()
+    draw_gantt_chart()
+    clear_inputs()
+
+# Edit task
+def edit_task():
+    selected = task_listbox.curselection()
+    if not selected:
+        messagebox.showwarning("No Selection", "Please select a task to edit.")
+        return
+
+    task = tasks[selected[0]]
+    entry_name.delete(0, tk.END)
+    entry_name.insert(0, task["name"])
+    start_date.set_date(task["start"])
+    end_date.set_date(task["end"])
+    combo_priority.set(task["priority"])
+    combo_status.set(task["status"])
+
+# Clear fields - when creating a new field, define a default value
+def clear_inputs():
+    entry_name.delete(0, tk.END)
+    combo_priority.set("Medium")
+    combo_status.set("Not Started")
+    start_date.set_date(datetime.today())
+    end_date.set_date(datetime.today())
+    task_listbox.selection_clear(0, tk.END)
+
+# Update listbox
+def update_task_list():
+    task_listbox.delete(0, tk.END)
+    for task in tasks:
+        label = f"{task['name']} ({task['start'].strftime('%Y-%m-%d')} to {task['end'].strftime('%Y-%m-%d')})"
+        task_listbox.insert(tk.END, label)
+
+# Draw Gantt chart
+def draw_gantt_chart():
+    ax.clear()
+    for i, task in enumerate(tasks):
+        start = task["start"]
+        end = task["end"]
+        duration = (end - start).days
+        color = priority_color(task["priority"])
+        label = f"{task['name']} ({task['status']})"
+        ax.barh(i, duration, left=start, color=color, edgecolor='black')
+        ax.text(start, i, label, va='center', ha='left', fontsize=8)
+
+    ax.set_yticks(range(len(tasks)))
+    ax.set_yticklabels([task["name"] for task in tasks])
+    ax.invert_yaxis()
+    ax.set_xlabel("Date")
+    chart_title = gantt_name.get().strip() or "Project Gantt Chart"
+    ax.set_title(chart_title, fontsize=14, weight='bold')
+    fig.autofmt_xdate()
+    canvas.draw()
+
+# Export chart as PNG
+def export_chart():
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".png",
+        filetypes=[("PNG Image", "*.png")],
+        title="Export Gantt Chart"
+    )
+    if file_path:
+        fig.savefig(file_path)
+        messagebox.showinfo("Exported", f"Gantt chart saved to:\n{file_path}")
+
+# Save to CSV
+def save_to_csv():
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV Files", "*.csv")],
+        title="Save Tasks to CSV"
+    )
+    if file_path:
+        df = pd.DataFrame(tasks)
+        df.to_csv(file_path, index=False)
+        messagebox.showinfo("Saved", f"Tasks saved to:\n{file_path}")
+
+# Load from CSV
+def load_from_csv():
+    file_path = filedialog.askopenfilename(
+        filetypes=[("CSV Files", "*.csv")],
+        title="Load Tasks from CSV"
+    )
+    if file_path:
+        try:
+            df = pd.read_csv(file_path, parse_dates=["start", "end"])
+            global tasks
+            tasks = df.to_dict(orient="records")
+            update_task_list()
+            draw_gantt_chart()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load CSV:\n{e}")
+
+# GUI SETUP
+root = tk.Tk()
+root.title("Gantt Chart Task Manager")
+root.geometry("1200x1200")  # Updated size
+root.resizable(True, True)
+
+# Menu bar - this gives a menu bar option for various load / save options, however, it doesn't show up well
+#menu_bar = tk.Menu(root)
+#file_menu = tk.Menu(menu_bar, tearoff=0)
+#file_menu.add_command(label="Save to CSV", command=save_to_csv)
+#file_menu.add_command(label="Load from CSV", command=load_from_csv)
+#file_menu.add_separator()
+#file_menu.add_command(label="Export Chart as PNG", command=export_chart)
+#file_menu.add_separator()
+#file_menu.add_command(label="Exit", command=root.quit)
+#menu_bar.add_cascade(label="☰ Menu", menu=file_menu)
+#menu_bar.add_cascade(label="File", menu=file_menu)
+#root.config(menu=menu_bar)
+
+# Input Frame - User inputs for Task Details: Name, Start Date, End Date, Priority, and Status
+frame_input = tk.LabelFrame(root, text="Task Details", padx=10, pady=10)
+frame_input.pack(padx=10, pady=10, fill=tk.X)
+
+tk.Label(frame_input, text="Task Name:").grid(row=0, column=0)
+entry_name = tk.Entry(frame_input, width=20)
+entry_name.grid(row=0, column=1, padx=5)
+
+tk.Label(frame_input, text="Gantt Chart Name:").grid(row=2, column=0)
+gantt_name = tk.Entry(frame_input, width=20)
+gantt_name.grid(row=2, column=1, padx=5)
+
+tk.Label(frame_input, text="Start Date:").grid(row=0, column=2)
+start_date = DateEntry(frame_input, width=12, background='darkblue', foreground='white', date_pattern='yyyy-mm-dd')
+start_date.grid(row=0, column=3, padx=5)
+
+tk.Label(frame_input, text="End Date:").grid(row=0, column=4)
+end_date = DateEntry(frame_input, width=12, background='darkblue', foreground='white', date_pattern='yyyy-mm-dd')
+end_date.grid(row=0, column=5, padx=5)
+
+tk.Label(frame_input, text="Priority:").grid(row=1, column=0)
+combo_priority = ttk.Combobox(frame_input, values=["High", "Medium", "Low"], width=18)
+combo_priority.set("Medium")
+combo_priority.grid(row=1, column=1, padx=5)
+
+tk.Label(frame_input, text="Status:").grid(row=1, column=2)
+
+
+combo_status = ttk.Combobox(frame_input, values=["Not Started", "In Progress", "Completed"], width=18)
+combo_status.set("Not Started")
+combo_status.grid(row=1, column=3, padx=5)
+
+btn_add = tk.Button(frame_input, text="Add/Update Task", command=add_task, bg="lightblue", width=15)
+btn_add.grid(row=1, column=5, padx=5)
+
+# Task List Frame
+frame_task_list = tk.LabelFrame(root, text="Tasks", padx=10, pady=10)
+frame_task_list.pack(padx=10, pady=5, fill=tk.X)
+
+task_listbox = tk.Listbox(frame_task_list, height=6)
+task_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+frame_buttons = tk.Frame(frame_task_list)
+frame_buttons.pack(side=tk.LEFT)
+
+btn_edit = tk.Button(frame_buttons, text="Edit Selected Task", command=edit_task, bg="khaki", width=20)
+btn_edit.pack(pady=2)
+
+btn_remove = tk.Button(frame_buttons, text="Remove Selected Task", command=remove_task, bg="tomato", width=20)
+btn_remove.pack(pady=2)
+
+btn_clear = tk.Button(frame_buttons, text="Clear Fields", command=clear_inputs, width=20)
+btn_clear.pack(pady=2)
+
+# Gantt Chart Frame
+frame_chart = tk.LabelFrame(root, text="Gantt Chart", padx=10, pady=10)
+frame_chart.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+fig, ax = plt.subplots(figsize=(10, 6))
+canvas = FigureCanvasTkAgg(fig, master=frame_chart)
+canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+# Initialize
+draw_gantt_chart()
+
+# Bottom Button Bar
+frame_bottom = tk.Frame(root, pady=10)
+frame_bottom.pack(fill=tk.X)
+
+btn_save = tk.Button(frame_bottom, text="💾 Save to CSV", command=save_to_csv, bg="#d1e7dd", width=20)
+btn_save.pack(side=tk.LEFT, padx=10)
+
+btn_load = tk.Button(frame_bottom, text="📂 Load from CSV", command=load_from_csv, bg="#cfe2ff", width=20)
+btn_load.pack(side=tk.LEFT, padx=10)
+
+btn_export = tk.Button(frame_bottom, text="📤 Export Chart as PNG", command=export_chart, bg="#fff3cd", width=25)
+btn_export.pack(side=tk.LEFT, padx=10)
+
+btn_exit = tk.Button(frame_bottom, text="❌ Exit", command=root.quit, bg="#f8d7da", width=10)
+btn_exit.pack(side=tk.RIGHT, padx=10)
+
+# Loop Main Routine to continuously run application
+root.mainloop()
