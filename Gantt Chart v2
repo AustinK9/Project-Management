@@ -207,12 +207,12 @@ class GanttChartApp(QWidget):
             
         # Tracking line for today's date
         today = datetime.today()
-        self.ax.axvline(today, color='blue', linestyle='--', linewidth=2, label="Today")
         
-        # Dummy axvlines (out of view) just for legend purposes
+        # Dummy axvlines just for legend purposes, blue today line for tracking
         self.ax.axvline(today, color='red', linestyle='-', linewidth=2, label='High Priority')
         self.ax.axvline(today, color='orange', linestyle='-', linewidth=2, label='Medium Priority')
         self.ax.axvline(today, color='green', linestyle='-', linewidth=2, label='Low Priority')
+        self.ax.axvline(today, color='blue', linestyle='--', linewidth=2, label="Today")
 
         # Set legend (now includes all axvlines)
         self.ax.legend(loc='upper right')   
