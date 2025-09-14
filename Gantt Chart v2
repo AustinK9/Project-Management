@@ -80,12 +80,14 @@ class GanttChartApp(QWidget):
 
         # Task List
         self.task_list = QListWidget()
+        self.task_list.setDragDropMode(QListWidget.InternalMove)
+        self.task_list.model().rowsMoved.connect(self.on_rows_moved)
         self.task_list.setMinimumHeight(120)
         self.task_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.task_list.setMinimumHeight(200)
         self.task_list.itemDoubleClicked.connect(self.edit_task)
         main_layout.addWidget(QLabel("Tasks:"))
-        main_layout.addWidget(self.task_list)
+        main_layout.addWidget(self.task_list)     
 
         # Chart
         self.figure, self.ax = plt.subplots(figsize=(10, 5))
@@ -188,6 +190,20 @@ class GanttChartApp(QWidget):
         self.priority_input.setCurrentText("Medium")
         self.status_input.setCurrentText("Not Started")
         self.task_list.clearSelection()
+        
+    def on_rows_moved(self, parent, start, end, destination, row):
+            if start == row or start + 1 == row:
+                return  # Return nothing
+            
+            # Move the corresponding task in the internal list
+            task = self.tasks.pop(start)
+            if start < row:
+                self.tasks.insert(row - 1, task)
+            else:
+                self.tasks.insert(row, task)
+
+            # Redraw the Gantt chart to reflect the new order
+            self.draw_gantt_chart()
 
     def update_task_list(self):
         self.task_list.clear()
@@ -208,13 +224,13 @@ class GanttChartApp(QWidget):
         # Tracking line for today's date
         today = datetime.today()
         
-        # Dummy axvlines just for legend purposes, blue today line for tracking
-        self.ax.axvline(today, color='red', linestyle='-', linewidth=2, label='High Priority')
-        self.ax.axvline(today, color='orange', linestyle='-', linewidth=2, label='Medium Priority')
-        self.ax.axvline(today, color='green', linestyle='-', linewidth=2, label='Low Priority')
+        # Set legend for Gantt Chart
+        self.ax.axvline(today, color='red', linestyle='-', linewidth=2, label='High')
+        self.ax.axvline(today, color='orange', linestyle='-', linewidth=2, label='Medium')
+        self.ax.axvline(today, color='green', linestyle='-', linewidth=2, label='Low')
         self.ax.axvline(today, color='blue', linestyle='--', linewidth=2, label="Today")
 
-        # Set legend (now includes all axvlines)
+        # Set legend location (now includes all axvlines)
         self.ax.legend(loc='upper right')   
 
         self.ax.set_yticks(range(len(self.tasks)))
