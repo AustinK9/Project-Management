@@ -1,0 +1,369 @@
+import os
+import shutil
+import threading
+import time
+from datetime import datetime
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+class BackupApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Multi Backup Network Tool")
+        self.root.geometry("750x450")
+        self.root.resizable(False, False)
+
+        self.backup_jobs = []
+        self.selected_job_index = None  # Track selected job in the list
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        padding = {'padx': 10, 'pady': 5}
+
+        # Left frame: Inputs & Controls
+        input_frame = tk.Frame(self.root)
+        input_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        # Network Path
+        tk.Label(input_frame, text="Network Path (e.g., \\\\192.168.1.100\\SharedFolder):").pack(**padding)
+        self.network_entry = tk.Entry(input_frame, width=40)
+        self.network_entry.pack(**padding)
+
+        # Local Backup Folder
+        tk.Label(input_frame, text="Local Backup Folder:").pack(**padding)
+        self.local_folder_var = tk.StringVar()
+        folder_frame = tk.Frame(input_frame)
+        folder_frame.pack(**padding)
+        self.folder_entry = tk.Entry(folder_frame, textvariable=self.local_folder_var, width=30)
+        self.folder_entry.pack(side=tk.LEFT)
+        browse_button = tk.Button(folder_frame, text="Browse", command=self.browse_folder)
+        browse_button.pack(side=tk.LEFT, padx=5)
+
+        # Time Interval
+        interval_frame = tk.Frame(input_frame)
+        interval_frame.pack(**padding)
+        tk.Label(interval_frame, text="Interval:").pack(side=tk.LEFT)
+        self.interval_entry = tk.Entry(interval_frame, width=5)
+        self.interval_entry.pack(side=tk.LEFT, padx=5)
+        self.unit_var = tk.StringVar(value="minutes")
+        unit_dropdown = ttk.Combobox(interval_frame, textvariable=self.unit_var, values=["minutes", "hours"], width=10, state="readonly")
+        unit_dropdown.pack(side=tk.LEFT)
+
+        # Add/Update Button
+        self.add_button = tk.Button(input_frame, text="Add Backup", command=self.add_backup, width=20, bg="blue", fg="white")
+        self.add_button.pack(pady=15)
+
+        # Start/Stop Buttons for the selected job
+        start_stop_frame = tk.Frame(input_frame)
+        start_stop_frame.pack(pady=10)
+        self.start_button = tk.Button(start_stop_frame, text="Start Backup", command=self.start_selected_backup, width=10, bg="green", fg="white")
+        self.start_button.pack(side=tk.LEFT, padx=5)
+        self.stop_button = tk.Button(start_stop_frame, text="Stop Backup", command=self.stop_selected_backup, width=10, bg="red", fg="white", state=tk.DISABLED)
+        self.stop_button.pack(side=tk.LEFT, padx=5)
+
+        # Status Indicator
+        status_indicator_frame = tk.Frame(input_frame)
+        status_indicator_frame.pack()
+        tk.Label(status_indicator_frame, text="Status: ").pack(side=tk.LEFT)
+        self.status_indicator = tk.Label(status_indicator_frame, text="🔴 Stopped", fg="red", font=("Arial", 10, "bold"))
+        self.status_indicator.pack(side=tk.LEFT)
+
+        # Progress Bar
+        tk.Label(input_frame, text="Progress:").pack(pady=(10, 0))
+        self.progress = ttk.Progressbar(input_frame, orient="horizontal", length=350, mode="determinate")
+        self.progress.pack(pady=5)
+
+        # Status Message
+        self.status_label = tk.Label(input_frame, text="", fg="blue")
+        self.status_label.pack(pady=10)
+
+        # Right frame: Backup Jobs List + Edit/Delete buttons
+        list_frame = tk.Frame(self.root)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tk.Label(list_frame, text="Backup Jobs:").pack(anchor=tk.W)
+
+        self.jobs_listbox = tk.Listbox(list_frame, height=20)
+        self.jobs_listbox.pack(fill=tk.BOTH, expand=True)
+        self.jobs_listbox.bind('<<ListboxSelect>>', self.on_job_select)
+
+        edit_button = tk.Button(list_frame, text="Edit Selected", command=self.edit_selected_job)
+        edit_button.pack(pady=5, fill=tk.X)
+
+        delete_button = tk.Button(list_frame, text="Delete Selected", command=self.delete_selected_job)
+        delete_button.pack(pady=5, fill=tk.X)
+
+    def browse_folder(self):
+        folder = filedialog.askdirectory(title="Select Local Backup Folder")
+        if folder:
+            self.local_folder_var.set(folder)
+
+    def get_interval_seconds(self):
+        try:
+            val = float(self.interval_entry.get())
+            unit = self.unit_var.get()
+            if unit == "minutes":
+                return val * 60
+            elif unit == "hours":
+                return val * 3600
+        except ValueError:
+            return None
+
+    def add_backup(self):
+        network_path = self.network_entry.get().strip()
+        local_backup_root = self.local_folder_var.get().strip()
+        interval = self.interval_entry.get().strip()
+        unit = self.unit_var.get()
+
+        if not network_path or not local_backup_root or not interval:
+            messagebox.showerror("Input Error", "Please enter all fields correctly.")
+            return
+
+        try:
+            interval_val = float(interval)
+            if interval_val <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Input Error", "Interval must be a positive number.")
+            return
+
+        # Check if network path exists (optional - may be slow for remote)
+        if not os.path.exists(network_path):
+            if not messagebox.askyesno("Path Warning", f"Network path does not exist or is not reachable:\n{network_path}\n\nAdd anyway?"):
+                return
+
+        if self.selected_job_index is not None:
+            # Update existing job
+            job = self.backup_jobs[self.selected_job_index]
+            job['network_path'] = network_path
+            job['local_folder'] = local_backup_root
+            job['interval'] = interval_val
+            job['unit'] = unit
+            self.update_status(f"Backup job #{self.selected_job_index + 1} updated.")
+            self.selected_job_index = None
+            self.add_button.config(text="Add Backup")
+        else:
+            # Add new job
+            self.backup_jobs.append({
+                "network_path": network_path,
+                "local_folder": local_backup_root,
+                "interval": interval_val,
+                "unit": unit,
+                "running": False,
+                "thread": None
+            })
+            self.update_status("Backup job added.")
+
+        self.refresh_job_list()
+        self.clear_inputs()
+        self.update_start_stop_buttons(enabled=False)
+        self.status_indicator.config(text="🔴 Stopped", fg="red")
+        self.progress["value"] = 0
+
+    def refresh_job_list(self):
+        self.jobs_listbox.delete(0, tk.END)
+        for i, job in enumerate(self.backup_jobs, 1):
+            status = "Running" if job['running'] else "Stopped"
+            display = f"{i}. {job['network_path']} -> {job['local_folder']} every {job['interval']} {job['unit']} ({status})"
+            self.jobs_listbox.insert(tk.END, display)
+
+    def clear_inputs(self):
+        self.network_entry.delete(0, tk.END)
+        self.local_folder_var.set("")
+        self.interval_entry.delete(0, tk.END)
+        self.unit_var.set("minutes")
+
+    def on_job_select(self, event):
+        selection = self.jobs_listbox.curselection()
+        if selection:
+            self.selected_job_index = selection[0]
+            job = self.backup_jobs[self.selected_job_index]
+            self.update_status(f"Selected backup job #{self.selected_job_index + 1}")
+            self.update_start_stop_buttons(enabled=True)
+            # Update status indicator and buttons based on job running state
+            if job['running']:
+                self.status_indicator.config(text="🟢 Running", fg="green")
+                self.start_button.config(state=tk.DISABLED)
+                self.stop_button.config(state=tk.NORMAL)
+            else:
+                self.status_indicator.config(text="🔴 Stopped", fg="red")
+                self.start_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED)
+            self.progress["value"] = 0
+        else:
+            self.selected_job_index = None
+            self.update_start_stop_buttons(enabled=False)
+            self.status_indicator.config(text="🔴 Stopped", fg="red")
+            self.progress["value"] = 0
+
+    def update_start_stop_buttons(self, enabled=True):
+        if enabled:
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+        else:
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.DISABLED)
+
+    def edit_selected_job(self):
+        if self.selected_job_index is None:
+            messagebox.showwarning("No selection", "Please select a backup job to edit.")
+            return
+
+        job = self.backup_jobs[self.selected_job_index]
+
+        # Load job details into inputs
+        self.network_entry.delete(0, tk.END)
+        self.network_entry.insert(0, job['network_path'])
+
+        self.local_folder_var.set(job['local_folder'])
+
+        self.interval_entry.delete(0, tk.END)
+        self.interval_entry.insert(0, str(job['interval']))
+
+        self.unit_var.set(job['unit'])
+
+        # Stop backup if running
+        if job['running']:
+            self.stop_selected_backup()
+
+        self.update_status(f"Editing job #{self.selected_job_index + 1}. Make changes and click 'Add Backup'.")
+        self.add_button.config(text="Update Backup")
+
+    def delete_selected_job(self):
+        if self.selected_job_index is None:
+            messagebox.showwarning("No selection", "Please select a backup job to delete.")
+            return
+
+        confirm = messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected backup job?")
+        if confirm:
+            job = self.backup_jobs[self.selected_job_index]
+            # Stop if running
+            if job['running']:
+                job['running'] = False
+                if job['thread'] and job['thread'].is_alive():
+                    job['thread'].join(timeout=1)
+
+            del self.backup_jobs[self.selected_job_index]
+            self.selected_job_index = None
+            self.refresh_job_list()
+            self.update_status("Backup job deleted.")
+            self.clear_inputs()
+            self.update_start_stop_buttons(enabled=False)
+            self.status_indicator.config(text="🔴 Stopped", fg="red")
+            self.progress["value"] = 0
+
+    def start_selected_backup(self):
+        if self.selected_job_index is None:
+            messagebox.showwarning("No selection", "Please select a backup job to start.")
+            return
+
+        job = self.backup_jobs[self.selected_job_index]
+        if job['running']:
+            messagebox.showinfo("Backup Running", "Selected backup job is already running.")
+            return
+
+        network_path = job['network_path']
+        local_backup_root = job['local_folder']
+        interval_seconds = job['interval'] * (60 if job['unit'] == 'minutes' else 3600)
+
+        if not os.path.exists(network_path):
+            messagebox.showerror("Path Error", f"Network path does not exist:\n{network_path}")
+            return
+
+        job['running'] = True
+        self.update_status(f"Starting backup job #{self.selected_job_index + 1}...")
+        self.status_indicator.config(text="🟢 Running", fg="green")
+        self.start_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+
+        # Start backup thread
+        job['thread'] = threading.Thread(
+            target=self.run_backup_loop,
+            args=(job, network_path, local_backup_root, interval_seconds),
+            daemon=True
+        )
+        job['thread'].start()
+        self.refresh_job_list()
+
+    def stop_selected_backup(self):
+        if self.selected_job_index is None:
+            messagebox.showwarning("No selection", "Please select a backup job to stop.")
+            return
+
+        job = self.backup_jobs[self.selected_job_index]
+        if not job['running']:
+            messagebox.showinfo("Backup Not Running", "Selected backup job is not running.")
+            return
+
+        job['running'] = False
+        self.update_status(f"Stopping backup job #{self.selected_job_index + 1}...")
+        self.status_indicator.config(text="🔴 Stopped", fg="red")
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED)
+        self.refresh_job_list()
+
+    def run_backup_loop(self, job, src, backup_root, interval):
+        while job['running']:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            self.update_status(f"Job #{self.selected_job_index + 1}: Starting incremental backup at {timestamp}")
+            try:
+                self.incremental_copy_with_progress(src, backup_root, job)
+                self.update_status(f"[{timestamp}] Job #{self.selected_job_index + 1}: Incremental backup completed.")
+            except Exception as e:
+                self.update_status(f"[{timestamp}] Job #{self.selected_job_index + 1}: Backup failed: {e}")
+            # Sleep in smaller increments to be more responsive to stop command
+            for _ in range(int(interval)):
+                if not job['running']:
+                    break
+                time.sleep(1)
+        self.update_status(f"Job #{self.selected_job_index + 1}: Backup stopped.")
+        self.status_indicator.config(text="🔴 Stopped", fg="red")
+        self.refresh_job_list()
+
+    def incremental_copy_with_progress(self, src, dest_root, job):
+        files_to_copy = []
+
+        for root_dir, _, files in os.walk(src):
+            rel_path = os.path.relpath(root_dir, src)
+            dest_dir = os.path.join(dest_root, rel_path)
+            for file in files:
+                src_file = os.path.join(root_dir, file)
+                dest_file = os.path.join(dest_dir, file)
+
+                if not os.path.exists(dest_file) or os.path.getmtime(src_file) > os.path.getmtime(dest_file):
+                    files_to_copy.append((src_file, dest_file))
+
+        total = len(files_to_copy)
+        self.progress["maximum"] = total
+        self.progress["value"] = 0
+
+        for i, (src_file, dest_file) in enumerate(files_to_copy, start=1):
+            if not job['running']:
+                self.update_status("Backup stopped.")
+                self.progress["value"] = 0
+                return
+
+            dest_folder = os.path.dirname(dest_file)
+            os.makedirs(dest_folder, exist_ok=True)
+
+            try:
+                shutil.copy2(src_file, dest_file)
+            except Exception as e:
+                self.update_status(f"Error copying {src_file}: {e}")
+
+            self.progress["value"] = i
+            self.root.update_idletasks()
+
+        self.progress["value"] = 0
+
+    def update_status(self, message):
+        print(message)
+        self.status_label.config(text=message)
+
+
+# Run the app
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BackupApp(root)
+    root.mainloop()
